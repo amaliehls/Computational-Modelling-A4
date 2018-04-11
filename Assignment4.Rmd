@@ -46,9 +46,9 @@ M=brm(MeanES|se(SdES)~1+(1|StudyRef),data=metadata,cores=2,chain=2,iter = 2000)
 #ITER - safe to put 2000
 #Priors - we are trying to estimate a prior but we still need a prior for that - brms calculates the best prior so we don't have to put it in ourselves (but they can be changed)
 
-forest(M,
-       show_data = TRUE,
-       av_name = "Effect size")
+forest(M,show_data = TRUE,av_name = "Effect size")
+
+
 
 
 ```
@@ -57,6 +57,11 @@ Step 2: Prepare the pitch SD data from last year
 - the data is available as Assignment4PitchData.csv (thanks Celine)
 - We do not know how to build random effects, yet. So we need to simplify the dataset to avoid interdependence between datapoint: How?
 - Also, let's standardize the data, so that they are compatible with our meta-analytic prior (Cohen's d is measured in SDs).
+
+```{r}
+pitch$standardized_mean=((pitch$PitchMean-mean(pitch$PitchMean))/sd(pitch$PitchMean))
+```
+
 
 Step 3: Build a regression model predicting Pitch SD from Diagnosis.
 - how is the outcome distributed? (likelihood function)
