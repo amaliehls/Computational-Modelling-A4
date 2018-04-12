@@ -12,6 +12,8 @@ setwd("~/Desktop/R code semester 4/Computational-Modelling-A4")
 library(readxl)
 library(brms)
 library(brmstools)
+library(data.table)
+library(rethinking)
 metadata = read_excel("Assignment4MetaData.xlsx")
 pitchdata = read_excel("Assignment4PitchDatav2.xlsx")
 
@@ -49,8 +51,6 @@ M=brm(MeanES|se(SdES)~1+(1|StudyRef),data=metadata,cores=2,chain=2,iter = 2000)
 forest(M,show_data = TRUE,av_name = "Effect size")
 
 
-
-
 ```
 
 Step 2: Prepare the pitch SD data from last year
@@ -59,15 +59,55 @@ Step 2: Prepare the pitch SD data from last year
 - Also, let's standardize the data, so that they are compatible with our meta-analytic prior (Cohen's d is measured in SDs).
 
 ```{r}
-pitch$standardized_mean=((pitch$PitchMean-mean(pitch$PitchMean))/sd(pitch$PitchMean))
+#get an overall mean from the pitch on all the trials 
+overall_PitchMean = aggregate(pitchdata[, 6], list(pitchdata$ID_unique), mean)
+#change the column names 
+setnames(overall_PitchMean, "Group.1", "ID_unique")
+setnames(overall_PitchMean, "PitchMean", "Overall_PitchMean")
+
+Pitch_data_new = merge(overall_PitchMean, pitchdata, by = "ID_unique")
+
+
+
+
+
+#get an overall sd from the pitch on all the trials 
+overall_PitchSd = aggregate(pitchdata[, 7], list(pitchdata$ID_unique), mean)
+
+#change the column names 
+setnames(overall_PitchSd, "Group.1", "ID_unique")
+setnames(overall_PitchSd, "PitchSD", "Overall_PitchSD")
+
+Pitch_data_new = merge(overall_PitchSd, Pitch_data_new, by = "ID_unique")
+
+#standardize pitch sd
+Pitch_data_new$Overall_PitchSD.s = (Pitch_data_new$Overall_PitchSD - mean(Pitch_data_new$Overall_PitchSD))/sd(Pitch_data_new$Overall_PitchSD)
+
+myvars <- c(unique("diagnosis"),unique("ID_unique"))
+newdata <- pitchdata[myvars]
+d = merge(newdata,overall_PitchSd)
+
+
+unique(pitchdata$ID)
+
+
+
 ```
 
 
 Step 3: Build a regression model predicting Pitch SD from Diagnosis.
 - how is the outcome distributed? (likelihood function)
+It seems that the outcome variable (standardized pitch SD) is long-tailed
+
 - how are the parameters of the likelihood distribution distributed? Which predictors should they be conditioned on?
 - use a skeptical/conservative prior for the effects of diagnosis. Remember you'll need to motivate it.
 - Describe and plot the estimates. Evaluate model quality
+
+```{r}
+#Model of pitch with default prior from brm
+pitchmodel=brm(Overall_PitchSD.s~diagnosis+(1|ID),data=Pitch_data_new,cores=2,chain=2,iter = 2000)
+```
+
 
 Step 4: Now re-run the model with the meta-analytic prior
 - Describe and plot the estimates. Evaluate model quality
