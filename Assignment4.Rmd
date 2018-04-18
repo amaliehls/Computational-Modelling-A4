@@ -14,8 +14,9 @@ library(brms)
 library(brmstools)
 library(data.table)
 library(rethinking)
+library(rstan)
 metadata = read_excel("Assignment4MetaData.xlsx")
-pitchdata = read_excel("Assignment4PitchDatav2.xlsx")
+pitch_data = read_excel("Assignment4PitchDatav2.xlsx")
 
 
 ```
@@ -40,6 +41,8 @@ Step 1: Reproduce the meta-analysis of pitch sd from previous studies of voice i
 ```{r}
 M=brm(MeanES|se(SdES)~1+(1|StudyRef),data=metadata,cores=2,chain=2,iter = 2000)
 
+summary(M)
+
 #We want the mean effect size of the studies and keep information on how sure they are (standard error of their sd effect size)
 #We think the studies are evaluating the same phenomenon - but there is some random variation - therefore we put the random effect (1|StudyRef)
 #there is uncertainty in MEanES and it can be found as the SE of sdES
@@ -59,53 +62,86 @@ Step 2: Prepare the pitch SD data from last year
 - Also, let's standardize the data, so that they are compatible with our meta-analytic prior (Cohen's d is measured in SDs).
 
 ```{r}
-#get an overall mean from the pitch on all the trials 
-overall_PitchMean = aggregate(pitchdata[, 6], list(pitchdata$ID_unique), mean)
-#change the column names 
-setnames(overall_PitchMean, "Group.1", "ID_unique")
-setnames(overall_PitchMean, "PitchMean", "Overall_PitchMean")
-
-Pitch_data_new = merge(overall_PitchMean, pitchdata, by = "ID_unique")
-
-
-
-
-
 #get an overall sd from the pitch on all the trials 
-overall_PitchSd = aggregate(pitchdata[, 7], list(pitchdata$ID_unique), mean)
-
+overall_PitchSd = aggregate(pitch_data[, 7], list(pitch_data$ID_unique), mean)
 #change the column names 
 setnames(overall_PitchSd, "Group.1", "ID_unique")
 setnames(overall_PitchSd, "PitchSD", "Overall_PitchSD")
 
-Pitch_data_new = merge(overall_PitchSd, Pitch_data_new, by = "ID_unique")
+#merge with full data set
+Pitch_data_new = merge(overall_PitchSd, pitch_data, by = "ID_unique")
+
+#use only necessary columns
+final_pitch_data = data.frame(Pitch_data_new$ID_unique, Pitch_data_new$Overall_PitchSD, Pitch_data_new$diagnosis)
+
+#remove duplicates
+final_pitch_data = final_pitch_data[!duplicated(final_pitch_data), ]
+
+#setnames 
+setnames(final_pitch_data, "Pitch_data_new.ID_unique", "ID_unique")
+setnames(final_pitch_data, "Pitch_data_new.Overall_PitchSD", "Overall_PitchSD")
+setnames(final_pitch_data, "Pitch_data_new.diagnosis", "diagnosis")
 
 #standardize pitch sd
-Pitch_data_new$Overall_PitchSD.s = (Pitch_data_new$Overall_PitchSD - mean(Pitch_data_new$Overall_PitchSD))/sd(Pitch_data_new$Overall_PitchSD)
-
-myvars <- c(unique("diagnosis"),unique("ID_unique"))
-newdata <- pitchdata[myvars]
-d = merge(newdata,overall_PitchSd)
-
-
-unique(pitchdata$ID)
-
-
+final_pitch_data$Overall_PitchSD.s = (final_pitch_data$Overall_PitchSD - mean(final_pitch_data$Overall_PitchSD))/sd(final_pitch_data$Overall_PitchSD)
 
 ```
 
 
 Step 3: Build a regression model predicting Pitch SD from Diagnosis.
 - how is the outcome distributed? (likelihood function)
-It seems that the outcome variable (standardized pitch SD) is long-tailed
 
-- how are the parameters of the likelihood distribution distributed? Which predictors should they be conditioned on?
+Looking at the data it seems that the outcome variable (standardized pitch SD) is long-tailed as many interaction dominant biological phenomena. Nonetheless we don't know much about the underlying process and choose a normal distribution as it tend to be the best guess.
+
+- how are the parameters of the likelihood distribution distributed?
+Alpha and beta are normally distributed and sigma is a Cauchy distribution. A (half)cauchy distribution starts high at 0 and goes down with a heavy tail letting the error be high but decreasingly probable
+
+Which predictors should they be conditioned on?
+Mu should be conditioned on diagnosis, we could consider also letting sigma be conditioned on diagnosis as we expect people with schizophrenia to have more variance in their pitchSDs. 
+
 - use a skeptical/conservative prior for the effects of diagnosis. Remember you'll need to motivate it.
+
+We don't know much about alpha and beta - therefore we assume that they are normally distributed. We have standadized the outcome and therefore we choose mean 0. SD should be conservative therefore we choose 1. 
+
+#1 is not conservative, it covers all values (spanding from -3 to 3), a more conservative prior is 0.1, we expect difference between the two groups to be 0 +- 0.3 SDs (it follows from the Gaussian that most probable values are in between -3 SD to 3SD) 
+
 - Describe and plot the estimates. Evaluate model quality
 
 ```{r}
-#Model of pitch with default prior from brm
-pitchmodel=brm(Overall_PitchSD.s~diagnosis+(1|ID),data=Pitch_data_new,cores=2,chain=2,iter = 2000)
+#Model of pitch
+
+model_pitchSD <- map(
+    alist(
+        Overall_PitchSD.s ~ dnorm( mu , sigma ) ,
+        mu <- a + b*diagnosis,
+        a ~ dnorm( 0 , 1 ) ,
+        b ~ dnorm( 0 , 0.1 ) ,
+        sigma ~ dcauchy( 0 , 2 )
+    ) ,
+    data=final_pitch_data )
+precis(model_pitchSD)
+plot(precis(model_pitchSD))
+
+#We could also make sigma depend on diagnosis - schizophrenia might have more variance than controls, log(sigma)=alphasigma + betasigma*diagnosis, log because then we get positive numbers, we would need priors for alphasigma and betasigma as well
+
+#Random effects, mu = a[participant] + b[participants]*diagnosis, lets a and b vary according to participants, but still what we know about the other participants can tell us something about the one
+# Instead of a[p]~normal(0,1) we can put a[p]~ñormal(a,1) a~normal(0,1) so that there is an underlying alpha common to all - or we can even make one alpha for schizophrenia and one for controls
+
+#Model with meta priors
+
+model_pitchSD <- map(
+    alist(
+        Overall_PitchSD.s ~ dnorm( mu , sigma ) ,
+        mu <- a + b*diagnosis,
+        a ~ dnorm( 0 , 1 ) ,
+        b ~ dnorm( -0.6 , 0.27 ) ,
+        sigma ~ dcauchy( 0 , 2 )
+    ) ,
+    data=final_pitch_data )
+precis(model_pitchSD)
+plot(precis(model_pitchSD))
+
+
 ```
 
 
