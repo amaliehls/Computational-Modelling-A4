@@ -15,6 +15,8 @@ library(brmstools)
 library(data.table)
 library(rethinking)
 library(rstan)
+library(bayesplot)
+library(cowplot)
 metadata = read_excel("Assignment4MetaData.xlsx")
 pitch_data = read_excel("Assignment4PitchDatav2.xlsx")
 
@@ -122,24 +124,25 @@ model_pitchSD <- map(
 precis(model_pitchSD)
 plot(precis(model_pitchSD))
 
+#simulate data from model
+sim.pitch = sim(model_pitchSD, data = final_pitch_data, n = 1000)
+
+#using bayesplot
+pp_check_model2 = pp_check(final_pitch_data$Overall_PitchSD.s, sim.pitch, ppc_dens_overlay)
+
+#poterior predictive plot on top of raw data
+dens(sim.pitch, col = "red", xlim = c(-5, 5), ylim = c(0,1),  xlab = "PitchSD")
+par(new=TRUE)
+dens(final_pitch_data$Overall_PitchSD.s, xlim = c(-5, 5), ylim = c(0,1), xlab = "PitchSD")
+title("PitchSD predicted ~ diagnosis")
+
+
 #We could also make sigma depend on diagnosis - schizophrenia might have more variance than controls, log(sigma)=alphasigma + betasigma*diagnosis, log because then we get positive numbers, we would need priors for alphasigma and betasigma as well
 
 #Random effects, mu = a[participant] + b[participants]*diagnosis, lets a and b vary according to participants, but still what we know about the other participants can tell us something about the one
 # Instead of a[p]~normal(0,1) we can put a[p]~ñormal(a,1) a~normal(0,1) so that there is an underlying alpha common to all - or we can even make one alpha for schizophrenia and one for controls
 
-#Model with meta priors
 
-model_pitchSD <- map(
-    alist(
-        Overall_PitchSD.s ~ dnorm( mu , sigma ) ,
-        mu <- a + b*diagnosis,
-        a ~ dnorm( 0 , 1 ) ,
-        b ~ dnorm( -0.6 , 0.27 ) ,
-        sigma ~ dcauchy( 0 , 2 )
-    ) ,
-    data=final_pitch_data )
-precis(model_pitchSD)
-plot(precis(model_pitchSD))
 
 
 ```
@@ -148,11 +151,86 @@ plot(precis(model_pitchSD))
 Step 4: Now re-run the model with the meta-analytic prior
 - Describe and plot the estimates. Evaluate model quality
 
+```{r}
+#Model with meta priors
+
+model_pitchSD_meta <- map(
+    alist(
+        Overall_PitchSD.s ~ dnorm( mu , sigma ) ,
+        mu <- a + b*diagnosis,
+        a ~ dnorm( 0 , 1 ) ,
+        b ~ dnorm( -0.6 , 0.27 ) ,
+        sigma ~ dcauchy( 0 , 2 )
+    ) ,
+    data=final_pitch_data )
+precis(model_pitchSD_meta)
+plot(precis(model_pitchSD_meta))
+
+#simulate
+sim.pitch.model3 = sim(model_pitchSD_meta, data = final_pitch_data, n = 1000)
+
+pp_check_model3 = pp_check(final_pitch_data$Overall_PitchSD.s, sim.pitch.model3, ppc_dens_overlay)
+
+#posterior predictive plot
+dens(sim.pitch.model3, col = "red", xlim = c(-5, 5), ylim = c(0,1),  xlab = "PitchSD")
+par(new=TRUE)
+dens(final_pitch_data$Overall_PitchSD.s, xlim = c(-5, 5), ylim = c(0,1), xlab = "PitchSD")
+title("PitchSD predicted ~ diagnosis")
+
+```
+
 Step 5: Compare the models
 - Plot priors and posteriors of the diagnosis effect in both models
 - Compare posteriors between the two models
 - Compare their relative distance from truth (WAIC)
 - Discuss how they compare and whether any of them is best.
+
+```{r}
+#compare plots of predictive posteriors and data 
+plot_grid(pp_check_model2, pp_check_model3, labels = c('Model2_Conservative', 'Model3_Metaanalytic'))
+
+
+
+x <- seq(-3,3, length=1e5)
+
+y.s <- dnorm(x, 0, 0.1) #sceptical
+y.m <- dnorm(x, -0.6, 0.32) #meta
+prior_df <- data.frame(x = rep(x,2), y = c(y.s, y.m), prior = c(rep("sceptical", length(y.s)),
+                                                                   rep("meta", length(y.m))
+                                                                   ))
+ggplot(prior_df, aes(x = x, y = y, color = prior)) + geom_line() 
+
+#As we expected: sceptical is more narrow. Meta has a lower mean than original
+
+
+#plot posterior
+post_samples <- c(posterior_samples(model_pitchSD)$b_diagnosis, posterior_samples(model_pitchSD_meta)$b_diagnosis) #how do I extract more than a 1000 per
+post_df <- data.frame(post_samples = post_samples, model = c(rep("sceptical", 1000),
+                                                                   rep("meta", 1000)
+                                                                   ))
+ggplot(post_df, aes(x = post_samples, color = model)) + geom_density(adjust = 1)
+
+
+
+#compare the posteriors
+plot(coeftab(model_pitchSD,model_pitchSD_meta))
+
+
+WAIC(model_pitchSD)
+WAIC(model_pitchSD_meta)
+
+compare(model_pitchSD,model_pitchSD_meta)
+
+
+
+#compaing pp checks = looks very similar. looking at the estimates the estimates look different though but the effect might be compensated by moving the intercept 
+#doesn't look like one model is better than the other 
+#WAIC test put a very tiny advantage to model with meta analytic priors but the se being sd being sp big that this is not difference that matter. If we have to choose between the two models, we could use a conceptual argument to use the model with meta analytic priors. We have a lot of extra knowledge from previous studies and it makes sence to include this knowledge.  
+
+
+
+```
+
 
 Step 6: Prepare a nice write up of the analysis and answer the questions at the top.
 
@@ -179,5 +257,9 @@ brm_out <- brm(PitchSD ~ 1 + Diagnosis  +(1|ID_unique/Study), # Outcome as a fun
 summary(brm_out1)
 plot(brm_out1)
 
+
+curve( dnorm( x , -0.6 , 0.33 ) , from=-3 , to=3 ) 
+par(new=TRUE) 
+dens(model_pitchSD)
 ```
 
